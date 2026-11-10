@@ -27,6 +27,7 @@
     </div>
 
     <div class="container">
+        <!-- Stat Cards -->
         <div class="row g-3 mb-4 text-center">
             <div class="col-6 col-md-4">
                 <div class="stat-card bg-users">
@@ -48,6 +49,23 @@
             </div>
         </div>
 
+        <!-- 1. Registered Users Table -->
+        <div class="table-container table-responsive">
+            <h5 class="fw-bold mb-3 text-primary"><i class="fa-solid fa-users-gear me-2"></i> All Registered Users</h5>
+            <table class="table table-hover align-middle">
+                <thead class="table-dark">
+                    <tr>
+                        <th>User Identifier / Phone</th>
+                        <th>Gmail ID</th>
+                        <th>Balance</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="usersList"></tbody>
+            </table>
+        </div>
+
+        <!-- 2. Pending Deposits -->
         <div class="table-container table-responsive">
             <h5 class="fw-bold mb-3 text-success"><i class="fa-solid fa-arrow-down-to-bracket me-2"></i> Pending Deposits</h5>
             <table class="table table-hover align-middle">
@@ -63,6 +81,7 @@
             </table>
         </div>
 
+        <!-- 3. Pending Withdraws -->
         <div class="table-container table-responsive">
             <h5 class="fw-bold mb-3 text-warning"><i class="fa-solid fa-arrow-up-from-bracket me-2"></i> Pending Withdraws</h5>
             <table class="table table-hover align-middle">
@@ -81,7 +100,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, onSnapshot, query, where, updateDoc, doc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, onSnapshot, query, where, updateDoc, deleteDoc, doc, getDoc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBk55D5GqpaVa9zpdYM_p00syFj8tPta4g",
@@ -95,34 +114,118 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // 1. Total Users
+        let usersLookup = {}; // युजरहरूको सम्पूर्ण डिटेल म्याप गर्नको लागि
+
+        // 1. Load All Users & Map Data
         onSnapshot(collection(db, "users"), (snapshot) => {
             document.getElementById("totalUsersCount").innerText = snapshot.size;
-        });
+            let usersHtml = "";
+            usersLookup = {};
 
-        // 2. Load Pending Deposits
-        const depositQuery = query(collection(db, "deposits"), where("status", "==", "pending"));
-        onSnapshot(depositQuery, (snapshot) => {
-            let html = "";
-            document.getElementById("pendingDepositCount").innerText = snapshot.size;
             snapshot.forEach((res) => {
                 const data = res.data();
-                html += `
+                const email = data.email || data.gmail || data.userEmail || 'N/A';
+                const phone = data.phone || data.mobile || data.userPhone || 'N/A';
+                const balance = data.balance !== undefined ? data.balance : 0;
+                const docId = res.id; // Firestore Document ID (जसलाई ब्यालेन्स अपडेट गर्न प्रयोग गरिन्छ)
+
+                // विभिन्न तरिकाले म्यापमा सेभ गर्ने ताकि डिपोजिटमा जुनसुकै डेटा (इमेल वा फोन) आए पनि भेटियोस्
+                usersLookup[docId] = { email, phone, docId };
+                if (email !== 'N/A') usersLookup[email.toLowerCase()] = { email, phone, docId };
+                if (phone !== 'N/A') usersLookup[phone] = { email, phone, docId };
+                if (data.userId) usersLookup[data.userId] = { email, phone, docId };
+
+                usersHtml += `
                     <tr>
-                        <td><b>${data.userPhone}</b></td>
-                        <td class="fw-bold text-success">रु ${data.amount}</td>
-                        <td><img src="${data.screenshotURL}" class="screenshot-img" onclick="viewImg('${data.screenshotURL}')"></td>
+                        <td><b>${phone !== 'N/A' ? phone : docId}</b></td>
+                        <td><span class="text-muted"><i class="fa-regular fa-envelope me-1"></i> ${email}</span></td>
+                        <td class="fw-bold text-success">रु ${balance}</td>
                         <td>
-                            <button class="btn btn-success btn-sm" onclick="approveDeposit('${res.id}', '${data.userPhone}', ${data.amount})">Approve</button>
-                            <button class="btn btn-danger btn-sm" onclick="rejectRequest('deposits', '${res.id}')">Reject</button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteUser('${docId}')">
+                                <i class="fa-solid fa-trash me-1"></i> Delete
+                            </button>
                         </td>
                     </tr>`;
             });
+            document.getElementById("usersList").innerHTML = usersHtml;
+        });
+
+        // --- Delete User ---
+        window.deleteUser = async (userId) => {
+            const confirm = await Swal.fire({
+                title: 'के तपाईं यो युजरलाई हटाउन चाहनुहुन्छ?',
+                text: "यो प्रक्रिया फेरि फिर्ता ल्याउन सकिने छैन!",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#d33',
+                cancelButtonColor: '#3085d6',
+                confirmButtonText: 'हो, डिलिट गरौं',
+                cancelButtonText: 'रद्द गर्नुहोस्'
+            });
+
+            if (confirm.isConfirmed) {
+                try {
+                    await deleteDoc(doc(db, "users", userId));
+                    Swal.fire('डिलिट भयो!', 'युजर डाटा सफलतापूर्वक हटाइयो।', 'success');
+                } catch (e) {
+                    Swal.fire('त्रुटि!', 'युजर डिलिट गर्न सकिएन।', 'error');
+                }
+            }
+        };
+
+        // 2. Load Pending Deposits
+        const depositQuery = query(collection(db, "deposits"), where("status", "==", "pending"));
+        onSnapshot(depositQuery, async (snapshot) => {
+            let html = "";
+            document.getElementById("pendingDepositCount").innerText = snapshot.size;
+
+            for (const res of snapshot.docs) {
+                const data = res.data();
+                
+                // डिपोजिटमा सेभ भएको सम्भावित पहिचान (इमेल, फोन, वा युजर आईडी)
+                let depositUserKey = data.email || data.userEmail || data.gmail || data.userPhone || data.phone || data.userId || '';
+                
+                let displayEmail = 'N/A';
+                let displayPhone = 'N/A';
+                let targetDocId = '';
+
+                // १. हाम्रो म्यापबाट खोज्ने
+                let matchedUser = usersLookup[depositUserKey] || usersLookup[String(depositUserKey).toLowerCase()];
+
+                if (matchedUser) {
+                    displayEmail = matchedUser.email;
+                    displayPhone = matchedUser.phone;
+                    targetDocId = matchedUser.docId;
+                } else {
+                    // २. यदि म्यापमा भेटिएन भने सीधा डकुमेन्ट आईडी मान्ने
+                    targetDocId = depositUserKey;
+                    displayPhone = depositUserKey;
+                }
+
+                html += `
+                    <tr>
+                        <td>
+                            <b>${displayPhone}</b><br>
+                            <small class="text-muted"><i class="fa-regular fa-envelope me-1"></i> ${displayEmail}</small>
+                        </td>
+                        <td class="fw-bold text-success">रु ${data.amount}</td>
+                        <td><img src="${data.screenshotURL}" class="screenshot-img" onclick="viewImg('${data.screenshotURL}')"></td>
+                        <td>
+                            <button class="btn btn-success btn-sm" onclick="approveDeposit('${res.id}', '${targetDocId}', ${data.amount})">Approve</button>
+                            <button class="btn btn-danger btn-sm" onclick="rejectRequest('deposits', '${res.id}')">Reject</button>
+                        </td>
+                    </tr>`;
+            }
             document.getElementById("depositList").innerHTML = html;
         });
 
-        // --- Approve Logic (Balance Update सहित) ---
-        window.approveDeposit = async (id, phone, amount) => {
+        // --- Approve Deposit ---
+        window.approveDeposit = async (depositId, userDocId, amount) => {
+            if (!userDocId || userDocId === 'undefined' || userDocId === 'null' || userDocId === '') {
+                Swal.fire('त्रुटि!', 'यो डिपोजिटसँग सम्बन्धित युजर आईडी फेला परेन।', 'error');
+                return;
+            }
+
             const confirm = await Swal.fire({
                 title: 'के तपाईं पक्का हुनुहुन्छ?',
                 text: `रु ${amount} एप्रुभ गरेपछि प्रयोगकर्ताको खातामा थपिनेछ।`,
@@ -133,40 +236,49 @@
 
             if (confirm.isConfirmed) {
                 try {
-                    // १. डिपोजिट स्टाटस अपडेट
-                    await updateDoc(doc(db, "deposits", id), { status: "approved" });
+                    // १. डिपोजिट स्टाटस 'approved' गर्ने
+                    await updateDoc(doc(db, "deposits", depositId), { status: "approved" });
 
-                    // २. युजरको ब्यालेन्स अपडेट (increment ले पुरानो ब्यालेन्समा आफै जोड्छ)
-                    const userRef = doc(db, "users", phone);
+                    // २. सहि युजरको डकुमेन्ट आईडीमा ब्यालेन्स जोड्ने
+                    const userRef = doc(db, "users", userDocId);
                     await updateDoc(userRef, {
                         balance: increment(Number(amount))
                     });
 
                     Swal.fire('सफल भयो!', 'डिपोजिट एप्रुभ भयो र ब्यालेन्स थपियो।', 'success');
                 } catch (e) {
-                    Swal.fire('Error!', 'डेटा अपडेट गर्न सकिएन।', 'error');
+                    Swal.fire('Error!', 'डेटा अपडेट गर्न सकिएन: ' + e.message, 'error');
                 }
             }
         };
 
-        // Reject Logic
+        // Reject Request
         window.rejectRequest = async (col, id) => {
-            if (confirm("के तपाईं यो रिक्वेस्ट रिजेक्ट गर्न चाहनुहुन्छ?")) {
+            const confirm = await Swal.fire({
+                title: 'के तपाईं पक्का हुनुहुन्छ?',
+                text: "यो अनुरोध अस्वीकृत गरिनेछ।",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'हो, अस्वीकृत गर्नुहोस्'
+            });
+
+            if (confirm.isConfirmed) {
                 await updateDoc(doc(db, col, id), { status: "rejected" });
                 Swal.fire('Rejected', 'अनुरोध अस्वीकृत गरियो।', 'info');
             }
         };
 
-        // 3. Load Pending Withdraws (Simple Logic)
+        // 3. Load Pending Withdraws
         const withdrawQuery = query(collection(db, "withdraws"), where("status", "==", "pending"));
         onSnapshot(withdrawQuery, (snapshot) => {
             let html = "";
             document.getElementById("pendingWithdrawCount").innerText = snapshot.size;
             snapshot.forEach((res) => {
                 const data = res.data();
+                const withdrawUser = data.email || data.userEmail || data.userPhone || data.phone || 'N/A';
                 html += `
                     <tr>
-                        <td><b>${data.userPhone}</b></td>
+                        <td><b>${withdrawUser}</b></td>
                         <td class="fw-bold text-danger">रु ${data.amount}</td>
                         <td><small>${data.method}: ${data.walletNo}</small></td>
                         <td>
